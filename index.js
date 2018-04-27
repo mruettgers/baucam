@@ -18,7 +18,7 @@ class BauCam {
 
     this.tasks = {
       capture: {cron: '0 */5 * * * *', action: () => this.capture()},
-      copy: {cron: '0 */5 * * * *', action: () => this.copy()},
+      copy: {cron: '30 */5 * * * *', action: () => this.copy()},
       cleanup: {cron: '0 0 */4 * * *', action: () => this.cleanup()}
     }
   }
