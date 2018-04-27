@@ -1,174 +1,35 @@
 import fs from 'fs'
+import path from 'path'
 import moment from 'moment-timezone'
 import yichan from 'yichan'
 import sharp from 'sharp'
-
-/*
- const TelegramBot = require('node-telegram-bot-api');
- const token = process.env.TELEGRAM_BOT_TOKEN;
- const bot = new TelegramBot(token, {polling: false});
- */
+import { CronJob } from 'cron'
 
 class BauCam {
-  constructor (config = {}) {
-    const {
-      captureInterval = 60 * 5,
-      localPath = './storage',
-      remotePath = '/tmp/fuse_d/DCIM',
-      maxFilesPerCopyTask = 50,
-      maxFilesToDeletePerCleanupTask = 100
-    } = config
-
-    this.localPath = localPath
-    this.remotePath = remotePath
-    this.maxFilesPerCopyTask = maxFilesPerCopyTask
-    this.maxFilesToDeletePerCleanupTask = maxFilesToDeletePerCleanupTask
-
-    this.procs = [
-      {method: 'capture', interval: captureInterval, from: 5, to: 23},
-      {method: 'clock', interval: captureInterval - 60, from: 5, to: 23},
-      //{method: 'copy', interval: captureInterval + 60, from: 5, to: 23},
-      //{method: 'cleanup', interval: 60 * 55 * 4, from: 5, to: 23}
-    ]
+  constructor () {
+    this.timeZone = 'Europe/Berlin'
+    this.localPath = './storage'
+    this.remotePath = '/tmp/fuse_d/DCIM'
+    this.maxFilesToCopyPerTask = 25
+    this.maxFilesToDeletePerTask = 100
 
     this.state = {}
     this.cam = new yichan()
-  }
 
-  now () {
-    return moment().tz('Europe/Berlin')
-  }
-
-  stripTrailingSlash (val) {
-    return val.replace(/\/$/, '')
-  }
-
-  getLocalFileName (file, date = null) {
-    return (date ? date : moment(file.date))
-        .format('YYYYMMDD_HHmmss') + '_' + file.name
-  }
-
-  getLocalStoragePath (file, create = false) {
-    const date = moment(file.date)
-    const path = this.stripTrailingSlash(this.localPath)
-      + '/' + date.format('YYYYMMDD')
-    if (create) {
-      fs.existsSync(path) || fs.mkdirSync(path)
+    this.tasks = {
+      capture: {cron: '0 */5 * * * *', action: () => this.capture()},
+      copy: {cron: '0 */5 * * * *', action: () => this.copy()},
+      cleanup: {cron: '0 0 */4 * * *', action: () => this.cleanup()}
     }
-    return path + '/' + this.getLocalFileName(file, date)
   }
 
   capture () {
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
       this.log('Capturing...')
+      await this.clock()
       this.cam.capturePhoto((error, path) => {
         error && reject(error)
         this.log(`Captured to ${path}.`)
-        resolve()
-      })
-    })
-  }
-
-  async copySnapshot (file) {
-    if (fs.existsSync(file)) {
-      this.log(`Copying snapshot from ${file}...`)
-      const target = this.stripTrailingSlash(this.localPath) + '/snapshot.jpg'
-      const tmpTarget = this.stripTrailingSlash(this.localPath) + '/snapshot.tmp.jpg'
-      await sharp(file)
-        .resize(2048, 1536)
-        .max()
-        .rotate(180)
-        .toFile(tmpTarget)
-      fs.renameSync(tmpTarget, target)
-    }
-  }
-
-  copy () {
-    return new Promise((resolve, reject) => {
-      this.log('Copying files from camera...')
-      this.cam.listDirectory(this.remotePath, async (error, res) => {
-        error && reject(error)
-        console.log(res)
-        for (let j = 0; j < res.length; j++) {
-          const remoteImgPath = this.stripTrailingSlash(this.remotePath) + '/' + res[j].name
-          await new Promise((resolve, reject) => {
-            this.cam.listDirectory(remoteImgPath, async (error, res) => {
-              error && reject(error)
-              let copied = 0
-              let lastFile = null
-              for (let i = 0; i < res.length; i++) {
-                if (copied >= this.maxFilesPerCopyTask) {
-                  await this.copySnapshot(lastFile)
-                  resolve()
-                  return
-                }
-                const file = res[i]
-                const remotePath = this.stripTrailingSlash(remoteImgPath) + '/' + file.name
-                const localPath = this.getLocalStoragePath(file, true)
-                await new Promise((resolve, reject) => {
-                  if (fs.existsSync(localPath)) {
-                    const stats = fs.statSync(localPath)
-                    if (stats.size === file.size) {
-                      //this.log(`Skipping ${localPath}...`)
-                      resolve()
-                      return
-                    }
-                  }
-                  copied++
-                  this.log(`Copying ${remotePath} -> ${localPath}...`)
-                  lastFile = localPath
-                  const stream = fs.createWriteStream(localPath)
-                  const src = this.cam.createReadStream(remotePath)
-                  src.on('error', reject)
-                  src.on('end', resolve)
-                  src.pipe(stream)
-                })
-              }
-              await this.copySnapshot(lastFile)
-            })
-          })
-        }
-        resolve()
-      })
-    })
-  }
-
-  cleanup () {
-    return new Promise((resolve) => {
-      this.log('Cleaning up old files from camera...')
-      this.cam.listDirectory(this.remotePath, async (error, res) => {
-        error && reject(error)
-        for (let j = 0; j < res.length; j++) {
-          const remoteImgPath = this.stripTrailingSlash(this.remotePath) + '/' + res[j].name
-          await new Promise((resolve, reject) => {
-            this.cam.listDirectory(remoteImgPath, async (error, res) => {
-              error && reject(error)
-              let deleted = 0
-              for (let i = 0; i < res.length; i++) {
-                if (deleted >= this.maxFilesToDeletePerCleanupTask) {
-                  resolve()
-                  return
-                }
-                const file = res[i]
-                const remotePath = this.stripTrailingSlash(remoteImgPath) + '/' + file.name
-                const localPath = this.getLocalStoragePath(file, true)
-                await new Promise((resolve, reject) => {
-                  if (fs.existsSync(localPath)) {
-                    const stats = fs.statSync(localPath)
-                    if (stats.size === file.size) {
-                      this.log(`Deleting file '${remotePath}...`)
-                      deleted++
-                      this.cam.deleteFile(remotePath, (err, res) => {
-                        err && reject(err)
-                        resolve()
-                      })
-                    }
-                  }
-                })
-              }
-            })
-          })
-        }
         resolve()
       })
     })
@@ -186,45 +47,173 @@ class BauCam {
     })
   }
 
-  process (i) {
-    this.procs.forEach(({interval, method, from, to}) => {
-      if (i % interval === 0) {
-        if (!this.state[method]) {
-          const hour = parseInt(this.now().format('HH'))
-          if (hour >= from && hour < to) {
-            this.state[method] = true
-            this[method]()
-              .then(() => {
-                this.state[method] = false
-              })
-              .catch(error => {
-                this.state[method] = false
-                this.error(error)
-              })
-          }
-          else {
-            this.log(`Won't run method '${method}' now because it should run between ${from} and ${to} o'clock only.`)
-          }
+  copy () {
+    return new Promise(async (resolve, reject) => {
+      this.log('Copying files from camera...')
+      const images = await this.getRemoteImages()
+      let copied = 0
+      let lastFile = null
+      for (let i = 0; i < images.length; i++) {
+        if (copied >= this.maxFilesToCopyPerTask) {
+          break
         }
+        await new Promise((resolve, reject) => {
+          const image = images[i]
+          const localPath = this.getLocalStoragePath(image.file, true)
+          if (fs.existsSync(localPath)) {
+            const stats = fs.statSync(localPath)
+            if (stats.size === image.file.size) {
+              //this.log(`Skipping ${localPath}...`)
+              resolve()
+              return
+            }
+          }
+          copied++
+          this.log(`Copying ${image.path} -> ${localPath}...`)
+          const stream = fs.createWriteStream(localPath)
+          const src = this.cam.createReadStream(image.path)
+          src.on('error', reject)
+          src.on('end', () => {
+            lastFile = localPath
+            resolve()
+          })
+          src.pipe(stream)
+        })
       }
+      if (lastFile) {
+        await this.copySnapshot(lastFile)
+      }
+      resolve()
     })
   }
 
-  run (i = 1) {
-    this.process(i)
-    setTimeout(() => {
-      this.run(++i)
-    }, 1000)
+  cleanup () {
+    return new Promise(async (resolve) => {
+      this.log('Cleaning up old files from camera...')
+      const images = await this.getRemoteImages()
+      let deleted = 0
+      for (let i = 0; i < images.length; i++) {
+        if (deleted >= this.maxFilesToDeletePerTask) {
+          break
+        }
+        await new Promise((resolve) => {
+          const image = images[i]
+          const localPath = this.getLocalStoragePath(image.file)
+          if (!fs.existsSync(localPath)) {
+            resolve()
+            return
+          }
+          const stats = fs.statSync(localPath)
+          if (stats.size !== image.file.size) {
+            resolve()
+            return
+          }
+          this.log(`Deleting ${image.path}...`)
+          deleted++
+          this.cam.deleteFile(image.path, (err, res) => {
+            err && reject(err)
+            resolve()
+          })
+        })
+      }
+      resolve()
+    })
+  }
+
+  async copySnapshot (file) {
+    if (fs.existsSync(file)) {
+      this.log(`Copying snapshot from ${file}...`)
+      const localPath = path.resolve(this.localPath)
+      const target = localPath + '/snapshot.jpg'
+      const tmpTarget = localPath + '/snapshot.tmp.jpg'
+      await sharp(file)
+        .resize(2048, 1536)
+        .max()
+        .rotate(180)
+        .toFile(tmpTarget)
+      fs.renameSync(tmpTarget, target)
+    }
+  }
+
+  now () {
+    return moment().tz('Europe/Berlin')
+  }
+
+  getLocalFileName (file, date = null) {
+    return (date ? date : moment(file.date))
+        .format('YYYYMMDD_HHmmss') + '_' + file.name
+  }
+
+  getLocalStoragePath (file, create = false) {
+    const date = moment(file.date)
+    const localPath = path.resolve(this.localPath) + '/' + date.format('YYYYMMDD')
+    if (create) {
+      fs.existsSync(localPath) || fs.mkdirSync(localPath)
+    }
+    return localPath + '/' + this.getLocalFileName(file, date)
+  }
+
+  getRemoteImages () {
+    return new Promise(async (resolve, reject) => {
+      const dirs = await this.getRemoteDirs()
+      const files = []
+      for (let i = 0; i < dirs.length; i++) {
+        const dir = dirs[i]
+        await new Promise((resolve, reject) => {
+          this.cam.listDirectory(dir, (error, images) => {
+            error && reject(error)
+            if (!images) {
+              reject(`An error occurred while reading the remote images in '${dir}'.`)
+            }
+            images.forEach(file => files.push({path: dir + file.name, file}))
+            resolve()
+          })
+        })
+      }
+      resolve(files)
+    })
+  }
+
+  getRemoteDirs () {
+    return new Promise((resolve, reject) => {
+      const remotePath = path.resolve(this.remotePath)
+      this.cam.listDirectory(remotePath, (error, parents) => {
+        error && reject(error)
+        if (!parents) {
+          reject('An error occurred while reading the remote directories.')
+        }
+        resolve(parents.map(parent => remotePath + '/' + parent.name))
+      })
+    })
+  }
+
+  error (err) {
+    console.error(err)
   }
 
   log (message) {
     console.log(message)
   }
 
-  error (error) {
-    console.log(error)
+  run () {
+    for (const name in this.tasks) {
+      const {cron, action} = this.tasks[name]
+      new CronJob(cron, async () => {
+        if (!this.state[name]) {
+          try {
+            this.state[name] = true
+            await action()
+          }
+          catch (e) {
+            this.error(e)
+          }
+          finally {
+            this.state[name] = false
+          }
+        }
+      }, null, true, this.timeZone)
+    }
   }
-
 }
 
 const bc = new BauCam()
