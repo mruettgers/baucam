@@ -1,0 +1,10 @@
+version: '3'
+services:
+  baucam:
+    image: node
+    restart: always
+    volumes:
+      - ./:/src/
+      - /media/bcam:/media/bcam
+    working_dir: /src
+    command: node_modules/.bin/babel-node index.js
