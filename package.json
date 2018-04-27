@@ -1,0 +1,24 @@
+{
+  "name": "baucam",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "babel-node index.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "moment": "^2.22.1",
+    "moment-timezone": "^0.5.16",
+    "node-telegram-bot-api": "^0.30.0",
+    "sharp": "^0.20.1",
+    "yichan": "^1.6.2"
+  },
+  "devDependencies": {
+    "babel-cli": "^6.26.0",
+    "babel-plugin-transform-runtime": "^6.23.0",
+    "babel-preset-env": "^1.6.1",
+    "babel-preset-stage-0": "^6.24.1"
+  }
+}
