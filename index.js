@@ -17,9 +17,9 @@ class BauCam {
     this.cam = new yichan()
 
     this.tasks = {
-      capture: {cron: '0 */5 * * * *', action: () => this.capture()},
+      capture: {cron: '0 */5 5-22 * * *', action: () => this.capture()},
       copy: {cron: '30 */5 * * * *', action: () => this.copy()},
-      cleanup: {cron: '0 0 */4 * * *', action: () => this.cleanup()}
+      cleanup: {cron: '0 7 */4 * * *', action: () => this.cleanup()}
     }
   }
 
